@@ -199,7 +199,7 @@ def gen_resume(resume_link, driver):
 		WebDriverWait(driver, MAX_WAIT).until(
 			EC.visibility_of_any_elements_located((By.CLASS_NAME, 'rezemp-ResumeDisplay-body'))
 		)
-	except TimeoutError:
+	except TimeoutException:
 		sys.stderr.write('Unable to get resume for ID %s, abandoning fetch' % idd)
 		return None
 

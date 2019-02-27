@@ -26,21 +26,35 @@ PATH=$(pwd):$PATH
 # Running script
 
 ```bash
-python indeed-scraper.py -h
-usage: python indeed-scraper.py <arguments>
+usage: indeed-scraper.py [-h] -q query --name name [-l location] [-si start]
+                         [-ei end] [--override] [--driver {firefox,chrome}]
 
 Scrape Indeed Resumes
 
 optional arguments:
-  -h, --help         show this help message and exit
-  -q query           search query to run on indeed e.g software engineer
-  -l location        location scope for search
-  -si start          starting index (multiples of 50)
-  -ei end            ending index (multiples of 50)
-  --threads threads  # of threads to run
-  --override         override existing result if any
-  --name name        name of search (used to save files)
+  -h, --help            show this help message and exit
+  -l location           location scope for search (default: Canada)
+  -si start             starting index (multiples of 50) (default: 0)
+  -ei end               ending index (multiples of 50) (default: 5000)
+  --override            override existing result if any (default: False)
+  --driver {firefox,chrome}
+
+required arguments:
+  -q query              search query to run on indeed e.g software engineer
+                        (default: None)
+  --name name           name of search (used to save files, spaces turned to
+                        "-") (default: None)
 ```
+
+## Running on SFU labs
+Because you can't seem to install dependencies in the school computers, it's a bit of a hassle but you can try do the following:
+```bash
+python3 -m venv venv $(pwd) --system-site-packages
+virtualenv --system-site-packages . 
+pip install -r requirements.txt
+```
+
+This should setup the necessary dependencies
 
 ## Example
 Scrape 100 resumes (1st - 100th resume) for software engineering in Canada
@@ -54,5 +68,4 @@ The `script.sh` can be run with a file that has a job title per line
 ./script.sh <filename>
 ```
 
-Please read `script.sh` for some more details
-
+Please read `script.sh` for some more details (you may modify as needed)
