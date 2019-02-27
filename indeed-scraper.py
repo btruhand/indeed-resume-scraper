@@ -183,7 +183,6 @@ def produce_additional(infosection):
 
 
 def produce_summary(summarysection):
-
 	summary_details = []
 	if len(summarysection) == 4:
   		summary_details = summarysection.contents[-1]
@@ -232,7 +231,9 @@ def gen_resume(resume_link, driver):
 
 def go_to_next_search_page(driver):
 	try:
-		driver.find_element_by_class_name('rezemp-pagination-nextbutton').click()
+		next_button = driver.find_element_by_class_name('rezemp-pagination-nextbutton')
+		# not sure why but next_button.click() does not always work across firefox and chrome
+		driver.execute_script("arguments[0].click();", next_button)
 	except NoSuchElementException:
 		print('No more pages to go to')
 		return False
@@ -278,7 +279,7 @@ def mine(args, json_file, search_URL):
 					# seems to not work for firefox (at least on MAC)
 					# actions.reset_actions()
 					# actions.key_down(CTRL_COMMAND, link).click(link).perform()
-					link.send_keys(CTRL_COMMAND + Keys.SHIFT + Keys.RETURN) # without shift firefox seems to not work
+					link.send_keys(CTRL_COMMAND + Keys.SHIFT + Keys.RETURN) # without shift firefox seems to not work on Mac
 					driver.switch_to.window(driver.window_handles[1])
 					resume = gen_resume(resume_link, driver)
 					driver.close()
@@ -286,11 +287,10 @@ def mine(args, json_file, search_URL):
 					if resume is not None:
 						json_file.write(resume.toJSON() + "\n")
 					search += 1
-				
+
+				continue_search = go_to_next_search_page(driver)
 				print('Finished getting %d resumes, going to sleep a bit' % search)
-				time.sleep(SLEEP_TIME)
-			
-			continue_search = go_to_next_search_page(driver)
+				time.sleep(SLEEP_TIME)			
 	finally:
 		print('Driver shutting down')
 		driver.close()
