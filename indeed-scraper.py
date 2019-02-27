@@ -278,7 +278,7 @@ def mine(args, json_file, search_URL):
 					# seems to not work for firefox (at least on MAC)
 					# actions.reset_actions()
 					# actions.key_down(CTRL_COMMAND, link).click(link).perform()
-					link.send_keys(CTRL_COMMAND + Keys.SHIFT + Keys.RETURN)
+					link.send_keys(CTRL_COMMAND + Keys.SHIFT + Keys.RETURN) # without shift firefox seems to not work
 					driver.switch_to.window(driver.window_handles[1])
 					resume = gen_resume(resume_link, driver)
 					driver.close()
@@ -287,7 +287,7 @@ def mine(args, json_file, search_URL):
 						json_file.write(resume.toJSON() + "\n")
 					search += 1
 				
-				print('Finished getting all resumes for index %d, going to sleep a bit' % search)
+				print('Finished getting %d resumes, going to sleep a bit' % search)
 				time.sleep(SLEEP_TIME)
 			
 			continue_search = go_to_next_search_page(driver)
@@ -318,7 +318,7 @@ def main(args):
 	except KeyboardInterrupt:
 		print('Interrupted by keyboard, exiting soon...')
 
-	print("Finished in %f seconds" % time.perf_counter() - t),
+	print("Finished in %f seconds" % (time.perf_counter() - t)),
 
 if __name__ == "__main__":
 	parser = argparse.ArgumentParser(
