@@ -50,7 +50,7 @@ required arguments:
 Because you can't seem to install dependencies in the school computers, it's a bit of a hassle but you can try do the following:
 ```bash
 python3 -m venv venv $(pwd) --system-site-packages
-virtualenv --system-site-packages . 
+source bin/activate # need to do this everytime you create a new terminal session
 pip install -r requirements.txt
 ```
 
