@@ -1,10 +1,12 @@
 import urllib.request
 import requests
-from selenium import webdriver
+from selenium.webdriver import firefox, chrome
+from selenium.webdriver.common.action_chains import ActionChains
+from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException
+from selenium.common.exceptions import TimeoutException, NoSuchElementException
 from bs4 import BeautifulSoup
 import time
 import json
@@ -19,6 +21,7 @@ import traceback
 import sys
 import glob
 import concurrent.futures
+import platform
 
 NUM_INDEED_RESUME_RESULTS = 50
 INDEED_RESUME_BASE_URL = 'https://resumes.indeed.com/resume/%s'
@@ -42,6 +45,13 @@ OUTPUT_BASE_NAME = 'resume_output_'
 # DRIVERS
 FIREFOX = 'firefox'
 CHROME = 'chrome'
+
+# LOGIC
+MAX_RETRIES = 3
+SLEEP_TIME = 3 
+MAX_WAIT = 3
+
+CTRL_COMMAND = Keys.COMMAND if platform.platform() == 'Darwin' else Keys.CONTROL
 
 class Resume:
 	def __init__ (self, idd, **kwargs):
@@ -91,21 +101,24 @@ class Info:
 	def __init__(self, details):
 		self.details = details
 
-def gen_idds(url, driver):
+def gen_resume_link_elements(driver):
+	"""Generate IDDs of resume
+	
+	Assumes driver already in page with resume IDDs
 
-	driver.get(url)
+	Returns list of WebElement
+	"""
 
 	resume_links = []
 	try:
-		resume_links = driver.find_elements_by_css_selector('.icl-TextLink.icl-TextLink--primary.rezemp-u-h4')
+		resume_links = driver.find_elements_by_css_selector(
+			'div.rezemp-ResumeSearchCard .icl-TextLink.icl-TextLink--primary.rezemp-u-h4'
+		)
 	except TimeoutException:
 		# could not complete in time 
 		resume_links = []
-	finally:
-		idds = [link.get_attribute('href') for link in resume_links]
-		idds = [idd[idd.rfind('/')+1:idd.rfind('?')] for idd in idds]
 
-	return idds
+	return resume_links
 
 def produce_work_experience(worksection):
 	work_experience = worksection.find_all('div', class_='rezemp-WorkExperience')
@@ -179,22 +192,26 @@ def produce_summary(summarysection):
 	return summary_details
 
 
-def gen_resume(idd, driver):
-	resume_url = INDEED_RESUME_BASE_URL % idd
+def gen_resume(resume_link, driver):
+	idd = resume_link[resume_link.rfind('/') + 1:resume_link.rfind('?')]
+	print('Processing resume ID', idd)
+	try:
+		WebDriverWait(driver, MAX_WAIT).until(
+			EC.visibility_of_any_elements_located((By.CLASS_NAME, 'rezemp-ResumeDisplay-body'))
+		)
+	except TimeoutError:
+		sys.stderr.write('Unable to get resume for ID %s, abandoning fetch' % idd)
+		return None
 
-	driver.get(resume_url)
 	p_element = driver.page_source
 	soup = BeautifulSoup(p_element, 'html.parser')
-
-	resume_details = {}
-
 	resume_body = soup.find('div', attrs={"class":"rezemp-ResumeDisplay-body"})
 
 	summary = resume_body.contents[0]
-	resume_details['summary'] = produce_summary(summary)
-
 	resume_subsections = resume_body.find_all('div', attrs={"class":"rezemp-ResumeDisplaySection"})
 
+	resume_details = {}
+	resume_details['summary'] = produce_summary(summary)
 	for subsection in resume_subsections:
 		children = subsection.contents
 		subsection_title = children[0].get_text()
@@ -213,105 +230,95 @@ def gen_resume(idd, driver):
 
 	return Resume(idd, **resume_details)
 
-def mine(filename, URL, override=True, search_range=None, steps=NUM_INDEED_RESUME_RESULTS, driver=FIREFOX):
-	if driver == FIREFOX:
-		driver = webdriver.Firefox()
-	else:
-		driver = webdriver.Chrome()
-	driver.implicitly_wait(10)
-
-	if override:
-		# implicitly empty file
-		open(filename, 'w').close()
-
-	search = search_range[0]
-	end = search_range[1]
-
+def go_to_next_search_page(driver):
 	try:
-		while search < end:
-			stri = URL + '&' + urlencode({'start': search})
-			idds = gen_idds(stri, driver)
+		driver.find_element_by_class_name('rezemp-pagination-nextbutton').click()
+	except NoSuchElementException:
+		print('No more pages to go to')
+		return False
 
-			if(len(idds) == 0):
-				# immediately stop
-				sys.stderr.write('Unable to find any resumes at index %d\n' % search)
-				break
+	return True
+
+def mine(args, json_file, search_URL):
+	if args.driver == FIREFOX:
+		fp = firefox.firefox_profile.FirefoxProfile()
+		fp.set_preference("browser.tabs.remote.autostart", False)
+		fp.set_preference("browser.tabs.remote.autostart.1", False)
+		fp.set_preference("browser.tabs.remote.autostart.2", False)
+		driver = firefox.webdriver.WebDriver(firefox_profile=fp)
+	else:
+		driver = chrome.webdriver.WebDriver()
+	driver.implicitly_wait(MAX_WAIT)
+
+	search = args.si
+	end = args.ei
+
+	attempts = 0
+	# actions = ActionChains(driver)
+	try:
+		search_point = search_URL + '&' + urlencode({'start': search})
+		continue_search = True
+		driver.get(search_point)
+		main_window = driver.current_window_handle
+		while search < end and continue_search:
+			link_elements = gen_resume_link_elements(driver)
+
+			if len(link_elements) == 0 and attempts < MAX_RETRIES:
+				# attempt retry
+				sys.stderr.write('Unable to find any resumes at index %d. Retrying in %d seconds...\n' % (search, SLEEP_TIME))
+				sys.stderr.flush()
+				attempts += 1
+				time.sleep(SLEEP_TIME)
+			elif len(link_elements) == 0 and attempts == MAX_RETRIES:
+				sys.stderr.write('Unable to find any resumes at index %d. Reached max attempts, abandoning search...\n' % search)
+				continue_search = False
+			else:
+				for link in link_elements[:min(len(link_elements), end - search)]:
+					resume_link = link.get_attribute('href')
+					# seems to not work for firefox (at least on MAC)
+					# actions.reset_actions()
+					# actions.key_down(CTRL_COMMAND, link).click(link).perform()
+					link.send_keys(CTRL_COMMAND + Keys.SHIFT + Keys.RETURN)
+					driver.switch_to.window(driver.window_handles[1])
+					resume = gen_resume(resume_link, driver)
+					driver.close()
+					driver.switch_to.window(main_window)
+					if resume is not None:
+						json_file.write(resume.toJSON() + "\n")
+					search += 1
+				
+				print('Finished getting all resumes for index %d, going to sleep a bit' % search)
+				time.sleep(SLEEP_TIME)
 			
-			# move to the next results irrespective
-			search += steps
-			with open(filename, 'a') as outfile:
-				# really only needed because to make
-				# small number of resumes for testing
-				for i in range(min(steps, len(idds))):
-					outfile.write(gen_resume(idds[i], driver).toJSON() + "\n")
+			continue_search = go_to_next_search_page(driver)
 	finally:
 		print('Driver shutting down')
 		driver.close()
-	
-	return filename
-
-def mine_multi(args, search_URL):
-	start = args.si
-	end = args.ei
-	tr = args.threads
-	steps = ceil((end - start) / tr)
-	starting_points = list(range(start, end, steps))
-	fs = []
-
-	with concurrent.futures.ThreadPoolExecutor(max_workers=tr) as executor:
-		for idx, search_start in enumerate(starting_points):
-			# Instantiates the thread
-			filename = OUTPUT_BASE_NAME + args.name + str(idx) + '.json'
-			search_range = (search_start, end if idx + 1 == len(starting_points) else starting_points[idx + 1])
-			mine_args = (filename, search_URL)
-			mine_kwargs = {
-				"override" : args.override,
-				"search_range" : search_range,
-				"steps": min(end - starting_points[idx], steps, NUM_INDEED_RESUME_RESULTS),
-				"driver": args.driver
-			}
-			fs.append(executor.submit(mine, *mine_args, **mine_kwargs))
-			
-		filenames = []
-		try:
-			for fut in concurrent.futures.as_completed(fs):
-				filenames.append(fut.result())
-		except (KeyboardInterrupt, Exception) as e:
-			sys.stderr.write('Caught exception %s of type %s, cleaning up results\n' % (str(e), type(e)))
-			clean_up_all_results(args.name)
-		else:
-			consolidate_files(args.name, filenames, args.override)
-
-def consolidate_files(name, names, override=True):
-	mode = 'w' if override else 'a'
-	file = open("resume_output_" + name + ".json", mode)
-	for nam in names:
-		with open(nam, 'r') as read:
-			file.write(read.read())
-		os.remove(nam)
-			
-	file.close()
-
-def clean_up_all_results(name):
-	output_glob = OUTPUT_BASE_NAME + name + '*' + '.json'
-	print(output_glob)
-	files = glob.glob(output_glob)
-	for file in files:
-		os.remove(file)
 
 def main(args):
-	t = time.clock()
+	t = time.perf_counter()
 	# restrict search only to job titles skills and field of study
 	query = {
 		'q': args.q,
 		'l': args.l,
-		'searchFields': 'jt,skills,fos'
+		'searchFields': 'jt',
+		'lmd': 'all'
 	}
 	query_string = urlencode(query)
 	search_URL= INDEED_RESUME_SEARCH_BASE_URL % query_string
 
-	mine_multi(args, search_URL)
-	print(time.clock() - t),
+	try:
+		filename = OUTPUT_BASE_NAME + args.name + '.json'
+		if args.override:
+			# implicitly empty file
+			open(filename, 'w').close()
+			
+		with open(filename, 'a') as json_file:
+			mine(args, json_file, search_URL)
+	except KeyboardInterrupt:
+		print('Interrupted by keyboard, exiting soon...')
+
+	print("Finished in %f seconds" % time.perf_counter() - t),
 
 if __name__ == "__main__":
 	parser = argparse.ArgumentParser(
@@ -325,7 +332,6 @@ if __name__ == "__main__":
 	parser.add_argument('-l', default='Canada', metavar='location', help='location scope for search')
 	parser.add_argument('-si', default=0, type=int, metavar='start', help='starting index (multiples of 50)')
 	parser.add_argument('-ei', default=5000, type=int, metavar='end', help='ending index (multiples of 50)')
-	parser.add_argument('--threads', default=8, type=int, metavar='threads', help='# of threads to run')
 	parser.add_argument('--override', default=False, action='store_true', help='override existing result if any')
 	parser.add_argument('--driver', default=FIREFOX, choices=[FIREFOX, CHROME])
 
