@@ -46,6 +46,7 @@ CHROME = 'chrome'
 class Resume:
 	def __init__ (self, idd, **kwargs):
 		self.id = idd
+		self.summary = kwargs.get('summary')
 		self.jobs = kwargs.get('jobs')
 		self.schools = kwargs.get('schools')
 		self.skills = kwargs.get('skills')
@@ -54,6 +55,9 @@ class Resume:
 	def toJSON(self):
 		return json.dumps(self, default=lambda o: o.__dict__)
 
+class Summary:
+	def __init__(self, details):
+		self.details = details
 
 class Job:
 	def __init__(self, title, company, work_dates, details):
@@ -164,6 +168,17 @@ def produce_additional(infosection):
 	info_details = content.contents[INFO_CONTENT_DETAILS_INDEX]
 	return [detail for detail in info_details.stripped_strings]
 
+
+def produce_summary(summarysection):
+
+	summary_details = []
+	if len(summarysection) == 4:
+  		summary_details = summarysection.contents[-1]
+  		summary_details = [detail for detail in summary_details.stripped_strings]
+
+	return summary_details
+
+
 def gen_resume(idd, driver):
 	resume_url = INDEED_RESUME_BASE_URL % idd
 
@@ -171,9 +186,15 @@ def gen_resume(idd, driver):
 	p_element = driver.page_source
 	soup = BeautifulSoup(p_element, 'html.parser')
 
-	resume_subsections = soup.find_all('div', attrs={"class":"rezemp-ResumeDisplaySection"})
-
 	resume_details = {}
+
+	resume_body = soup.find('div', attrs={"class":"rezemp-ResumeDisplay-body"})
+
+	summary = resume_body.contents[0]
+	resume_details['summary'] = produce_summary(summary)
+
+	resume_subsections = resume_body.find_all('div', attrs={"class":"rezemp-ResumeDisplaySection"})
+
 	for subsection in resume_subsections:
 		children = subsection.contents
 		subsection_title = children[0].get_text()
