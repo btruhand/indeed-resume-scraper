@@ -23,9 +23,12 @@ import glob
 import concurrent.futures
 import platform
 
+# SCRAPING NECESSITY
 NUM_INDEED_RESUME_RESULTS = 50
 INDEED_RESUME_BASE_URL = 'https://resumes.indeed.com/resume/%s'
 INDEED_RESUME_SEARCH_BASE_URL = 'https://resumes.indeed.com/search/?%s'
+INDEED_LOGIN_URL = 'https://secure.indeed.com/account/login'
+SEARCH_UPPER_LIMIT = 1050
 
 # RESUME SUBSECTIONS TITLE (in normal setting)
 WORK_EXPERIENCE = 'Work Experience'
@@ -50,8 +53,11 @@ CHROME = 'chrome'
 MAX_RETRIES = 3
 SLEEP_TIME = 3 
 MAX_WAIT = 3
-
 CTRL_COMMAND = Keys.COMMAND if platform.platform() == 'Darwin' else Keys.CONTROL
+
+# ENVIRONMENT
+ENV_USER = 'INDEED_RESUME_USER'
+ENV_PASS = 'INDEED_RESUME_PASSWORD'
 
 class Resume:
 	def __init__ (self, idd, **kwargs):
@@ -105,7 +111,6 @@ def gen_resume_link_elements(driver):
 	"""Generate IDDs of resume
 	
 	Assumes driver already in page with resume IDDs
-
 	Returns list of WebElement
 	"""
 
@@ -205,7 +210,6 @@ def gen_resume(resume_link, driver):
 	p_element = driver.page_source
 	soup = BeautifulSoup(p_element, 'html.parser')
 	resume_body = soup.find('div', attrs={"class":"rezemp-ResumeDisplay-body"})
-
 	summary = resume_body.contents[0]
 	resume_subsections = resume_body.find_all('div', attrs={"class":"rezemp-ResumeDisplaySection"})
 
@@ -240,7 +244,7 @@ def go_to_next_search_page(driver):
 
 	return True
 
-def mine(args, json_file, search_URL):
+def mine(args, json_file, search_range, search_URL):
 	if args.driver == FIREFOX:
 		fp = firefox.firefox_profile.FirefoxProfile()
 		fp.set_preference("browser.tabs.remote.autostart", False)
@@ -288,12 +292,64 @@ def mine(args, json_file, search_URL):
 						json_file.write(resume.toJSON() + "\n")
 					search += 1
 
-				continue_search = go_to_next_search_page(driver)
 				print('Finished getting %d resumes, going to sleep a bit' % search)
 				time.sleep(SLEEP_TIME)			
+				continue_search = go_to_next_search_page(driver)
 	finally:
 		print('Driver shutting down')
 		driver.close()
+
+def mine_multi(args, search_URL):
+	start = args.si
+	end = args.ei
+	tr = args.threads
+	steps = ceil((end - start) / tr)
+	starting_points = list(range(start, end, steps))
+	fs = []
+
+	with concurrent.futures.ThreadPoolExecutor(max_workers=tr) as executor:
+		for idx, search_start in enumerate(starting_points):
+			# Instantiates the thread
+			filename = OUTPUT_BASE_NAME + args.name + str(idx) + '.json'
+			search_range = (search_start, end if idx + 1 == len(starting_points) else starting_points[idx + 1])
+			mine_args = (filename, search_URL)
+			mine_kwargs = {
+				"override" : args.override,
+				"search_range" : search_range,
+				"steps": min(end - starting_points[idx], steps, NUM_INDEED_RESUME_RESULTS),
+				"driver": args.driver
+			}
+			fs.append(executor.submit(mine, *mine_args, **mine_kwargs))
+			
+		filenames = []
+		try:
+			for fut in concurrent.futures.as_completed(fs):
+				filenames.append(fut.result())
+		except (KeyboardInterrupt, Exception) as e:
+			traceback.print_exc()
+			sys.stderr.write('Caught exception %s of type %s, cleaning up results\n' % (str(e), type(e)))
+			clean_up_all_results(args.name)
+		else:
+			consolidate_files(args.name, filenames, args.override)
+
+def consolidate_files(name, names, override=True):
+	mode = 'w' if override else 'a'
+	file = open("resume_output_" + name + ".json", mode)
+	for nam in names:
+		with open(nam, 'r') as read:
+			file.write(read.read())
+		os.remove(nam)
+			
+	file.close()
+
+def clean_up_all_results(name):
+	output_glob = OUTPUT_BASE_NAME + name + '*' + '.json'
+	files = glob.glob(output_glob)
+	for file in files:
+		os.remove(file)
+
+def results_json_filename(name, suffix=''):
+	return OUTPUT_BASE_NAME + name + suffix + '.json'
 
 def main(args):
 	t = time.perf_counter()
@@ -307,18 +363,32 @@ def main(args):
 	query_string = urlencode(query)
 	search_URL= INDEED_RESUME_SEARCH_BASE_URL % query_string
 
-	try:
-		filename = OUTPUT_BASE_NAME + args.name + '.json'
+	if args.login:
+		# can do multi-process work
+		mine_multi(args, search_URL)
+	else:
+		json_filename = results_json_filename(args.name)
 		if args.override:
-			# implicitly empty file
-			open(filename, 'w').close()
-			
-		with open(filename, 'a') as json_file:
-			mine(args, json_file, search_URL)
-	except KeyboardInterrupt:
-		print('Interrupted by keyboard, exiting soon...')
+			open(json_filename, 'w').close()
+		with open(json_filename, 'a') as json_file:
+			mine(args, json_file, (max(0, args.si), min(args.ei, SEARCH_UPPER_LIMIT)), search_URL)
 
-	print("Finished in %f seconds" % (time.perf_counter() - t)),
+	print(time.clock() - t),
+
+class LoginAction(argparse.Action):
+	def __init__(self, option_strings, dest, nargs=None, **kwargs):
+		# enforce nargs to be 0
+		nargs = 0
+		super(LoginAction, self).__init__(option_strings, dest, nargs=nargs, **kwargs)
+
+	def __call__(self, parser, namespace, values, option_string=None):
+		if os.environ.get(ENV_USER) is None:
+			raise argparse.ArgumentError(self, 'Environment variable %s is not set please set it first' % ENV_USER)
+		if os.environ.get(ENV_PASS) is None:
+			raise argparse.ArgumentError(self, 'Environment variable %s is not set please set it first' % ENV_PASS)
+		setattr(namespace, self.dest, True)
+		setattr(namespace, 'user', os.environ.get(ENV_USER))
+		setattr(namespace, 'password', os.environ.get(ENV_PASS))
 
 if __name__ == "__main__":
 	parser = argparse.ArgumentParser(
@@ -331,9 +401,11 @@ if __name__ == "__main__":
 
 	parser.add_argument('-l', default='Canada', metavar='location', help='location scope for search')
 	parser.add_argument('-si', default=0, type=int, metavar='start', help='starting index (multiples of 50)')
-	parser.add_argument('-ei', default=5000, type=int, metavar='end', help='ending index (multiples of 50)')
+	parser.add_argument('-ei', default=1050, type=int, metavar='end', help='ending index (multiples of 50)')
+	parser.add_argument('--threads', default=8, type=int, metavar='threads', help='# of threads to run')
 	parser.add_argument('--override', default=False, action='store_true', help='override existing result if any')
 	parser.add_argument('--driver', default=FIREFOX, choices=[FIREFOX, CHROME])
+	parser.add_argument('--login', default=False, action=LoginAction, help='Simulate logging in as a user (read README further for details)')
 
 	args = parser.parse_args()
 
