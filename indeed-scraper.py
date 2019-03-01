@@ -19,13 +19,15 @@ import sys
 import concurrent.futures
 import platform
 import logging
+import glob
 
 # SCRAPING NECESSITY
 NUM_INDEED_RESUME_RESULTS = 50
 INDEED_RESUME_BASE_URL = 'https://resumes.indeed.com/resume/%s'
-INDEED_RESUME_SEARCH_BASE_URL = 'https://resumes.indeed.com/search/?%s'
+INDEED_RESUME_SEARCH_BASE_URL = 'https://resumes.indeed.com/search?%s'
 INDEED_LOGIN_URL = 'https://secure.indeed.com/account/login'
 SEARCH_UPPER_LIMIT = 1050
+MAX_PROCESSORS = 4
 
 # RESUME SUBSECTIONS TITLE (in normal setting)
 WORK_EXPERIENCE = 'Work Experience'
@@ -48,7 +50,7 @@ CHROME = 'chrome'
 
 # LOGIC
 MAX_RETRIES = 3
-SLEEP_TIME = 3 
+SLEEP_TIME = 5 
 MAX_WAIT = 3
 CTRL_COMMAND = Keys.COMMAND if platform.platform() == 'Darwin' else Keys.CONTROL
 
@@ -116,13 +118,30 @@ class AllExpectedCondition:
 				return False
 		return True
 
+def go_to_page(driver, url):
+	attempts = 0
+	sleep_for = SLEEP_TIME
+	while attempts < MAX_RETRIES:
+		try:
+			driver.get(url)
+			return True
+		except TimeoutException:
+			if attempts != MAX_RETRIES - 1:
+				logging.error('Unable to get to %s in time, attempt #%d. Retry in %d seconds', url, attempts + 1, sleep_for)
+				time.sleep(sleep_for)
+			else:
+				logging.error('Unable to get to %s in time and reached maximum tries, aborting...', url)
+			attempts += 1
+			# exponentially backoff
+			sleep_for *= 2
+	return False
+
 def gen_resume_link_elements(driver):
 	"""Generate IDDs of resume
 	
 	Assumes driver already in page with resume IDDs
 	Returns list of WebElement
 	"""
-
 	resume_links = []
 	try:
 		resume_links = driver.find_elements_by_css_selector(
@@ -257,7 +276,9 @@ def go_to_next_search_page(driver):
 
 def simulate_login(args, driver, search_point):
 	login_url = INDEED_LOGIN_URL + '?' + urlencode({'service': 'roz', 'continue': search_point}, safe='%')
-	driver.get(login_url)
+	if not go_to_page(driver, login_url):
+		raise TimeoutException('Not able to login in given timeframe')
+
 	email = driver.find_element_by_id('login-email-input')
 	password = driver.find_element_by_id('login-password-input')
 	email.send_keys(args.user)
@@ -266,10 +287,10 @@ def simulate_login(args, driver, search_point):
 	submission_button = driver.find_element_by_id('login-submit-button')
 	submission_button.submit()
 
-	WebDriverWait(driver, MAX_WAIT).until(EC.url_to_be(search_point))
+	# twice the wait due to how important it is
+	WebDriverWait(driver, MAX_WAIT * 2).until(EC.url_to_be(search_point))
 
-def simulation_algorithm(driver, link_elements, main_window):
-	resumes = []
+def simulation_algorithm(driver, link_elements, json_file, main_window):
 	for link in link_elements:
 		resume_link = link.get_attribute('href')
 
@@ -278,20 +299,26 @@ def simulation_algorithm(driver, link_elements, main_window):
 		# actions.key_down(CTRL_COMMAND, link).click(link).perform()
 		link.send_keys(CTRL_COMMAND + Keys.SHIFT + Keys.RETURN) # without shift firefox seems to not work on Mac
 		driver.switch_to.window(driver.window_handles[1])
-		resumes.append(gen_resume(resume_link, driver))
+		resume = gen_resume(resume_link, driver)
 		driver.close()
-		driver.switch_to.window(main_window)
-	return resumes
 
-def non_simulation_algorithm(driver, resume_links, return_url):
-	resumes = []
+		if resume is not None:
+			json_file.write(resume.toJSON() + "\n")
+		driver.switch_to.window(main_window)
+
+def non_simulation_algorithm(driver, resume_links, json_file, return_url):
 	for link in resume_links:
-		driver.get(link)
-		resumes.append(gen_resume(link, driver))
+		if go_to_page(driver, link):
+			resume = gen_resume(link, driver)
+			if resume is not None:
+				json_file.write(resume.toJSON() + "\n")
+		else:
+			logging.error('Not able to go to resume page in time')
 	
 	# return back to some return URL
-	driver.get(return_url)
-	return resumes
+	while not go_to_page(driver, return_url):
+		# just pass
+		pass
 
 def mine(args, json_filename, search_range, search_URL):
 	if args.driver == FIREFOX:
@@ -303,12 +330,12 @@ def mine(args, json_filename, search_range, search_URL):
 	else:
 		driver = chrome.webdriver.WebDriver()
 	driver.implicitly_wait(MAX_WAIT)
+	driver.set_page_load_timeout(MAX_WAIT)
 
 	search = args.si
 	end = args.ei
 
 	attempts = 0
-	# actions = ActionChains(driver)
 	try:
 		search_point = search_URL + '&' + urlencode({'start': search})
 		json_file = open(json_filename, 'w' if args.override else 'a')
@@ -316,58 +343,52 @@ def mine(args, json_filename, search_range, search_URL):
 		if args.login:
 			simulate_login(args, driver, search_point)
 		else:
-			driver.get(search_point)
+			if not go_to_page(driver, search_point):
+				raise TimeoutException('Unable to get to initial search point %s in time' % search_point)
 
 		continue_search = True
 		main_window = driver.current_window_handle
 		while search < end and continue_search:
 			link_elements = gen_resume_link_elements(driver)
 
-			if len(link_elements) == 0 and attempts < MAX_RETRIES:
-				# attempt retry
-				sys.stderr.write('Unable to find any resumes at index %d. Retrying in %d seconds...\n' % (search, SLEEP_TIME))
-				sys.stderr.flush()
-				attempts += 1
-				time.sleep(SLEEP_TIME)
-			elif len(link_elements) == 0 and attempts == MAX_RETRIES:
-				sys.stderr.write('Unable to find any resumes at index %d. Reached max attempts, abandoning search...\n' % search)
-				continue_search = False
+			if len(link_elements) == 0:
+				if attempts < MAX_RETRIES:
+					# attempt retry
+					logging.error('Unable to find any resumes at index %d. Retrying in %d seconds...', search, SLEEP_TIME)
+					attempts += 1
+					time.sleep(SLEEP_TIME)
+				else:
+					logging.error('Unable to find any resumes at index %d. Reached max attempts, abandoning search...', search)
+					continue_search = False
 			else:
 				link_elements = link_elements[:min(len(link_elements), end - search)]
+				search += len(link_elements)
 				if args.simulate:
-					resumes = simulation_algorithm(driver, link_elements, main_window)
+					simulation_algorithm(driver, link_elements, json_file, main_window)
 				else:
 					links = [link.get_attribute('href') for link in link_elements]
-					resumes = non_simulation_algorithm(driver, links, driver.current_url)
+					non_simulation_algorithm(driver, links, json_file, driver.current_url)
 				
-				for resume in resumes:
-					if resume is not None:
-						json_file.write(resume.toJSON() + "\n")
-				search += len(resumes)
-
 				logging.info('Finished getting resumes up to %d index, going to sleep a bit', search)
 				time.sleep(SLEEP_TIME)
 				continue_search = go_to_next_search_page(driver)
-	except Exception:
+	except (TimeoutException, Exception):
 		traceback.print_exc()
 		logging.error('Caught exception finishing mining soon')
 	finally:
 		logging.info('Driver shutting down')
 		json_file.close()
 		driver.close()
-	
-	return json_filename
 
-def mine_multi(args, search_URL):
+def mine_multi(args, main_result_file, search_URL):
 	start = args.si
 	end = args.ei
-	tr = args.threads
-	steps = ceil((end - start) / tr)
+	steps = ceil((end - start) / args.processes)
 	starting_points = list(range(start, end, steps))
 	print(starting_points)
 	fs = []
 
-	with concurrent.futures.ProcessPoolExecutor(max_workers=tr) as executor:
+	with concurrent.futures.ProcessPoolExecutor(max_workers=args.processes) as executor:
 		for idx, search_start in enumerate(starting_points):
 			# Instantiates the thread
 			filename = results_json_filename(args.name, str(idx))
@@ -375,26 +396,22 @@ def mine_multi(args, search_URL):
 			mine_args = (args, filename, search_range, search_URL)
 			fs.append(executor.submit(mine, *mine_args))
 			
-		potential_results = []
 		try:
-			for fut in concurrent.futures.as_completed(fs):
-				potential_results.append(fut.result())
+			# wait for all to finish
+			concurrent.futures.wait(fs)
 		except KeyboardInterrupt:
 			logging.warn('Mining interrupted by user, joining results and exiting soon...')
 		finally:
-			# redo it again since we have interrupted them using keyboard
-			for fut in concurrent.futures.as_completed(fs):
-				result_file = fut.result()
-				if result_file not in potential_results:
-					potential_results.append(result_file)
-			consolidate_files(args.name, potential_results)
+			consolidate_files(args.name, main_result_file, override=args.override)
 
-def consolidate_files(name, subresult_files):
-	with open(results_json_filename(name), 'w') as result_json_file:
-		for subresult in subresult_files:
-			with open(subresult, 'r') as f:
-				result_json_file.write(f.read())
-			os.remove(subresult)
+def consolidate_files(name, main_result_file, override=False):
+	glob_results_file = results_json_filename(name, suffix='*')
+	with open(main_result_file, 'a') as result_json_file:
+		for results_file in glob.glob(glob_results_file):
+			if main_result_file != results_file: 
+				with open(results_file, 'r') as f:
+					result_json_file.write(f.read())
+				os.remove(results_file)
 
 def results_json_filename(name, suffix=''):
 	return OUTPUT_BASE_NAME + name + suffix + '.json'
@@ -411,14 +428,15 @@ def main(args):
 	query_string = urlencode(query)
 	search_URL= INDEED_RESUME_SEARCH_BASE_URL % query_string
 
-	if args.login:
+	main_result_file = results_json_filename(args.name)
+	if args.override:
+		open(main_result_file, 'w').close()
+
+	if args.login and args.processes != 1:
 		# can do multi-process work
-		mine_multi(args, search_URL)
+		mine_multi(args, main_result_file, search_URL)
 	else:
-		json_filename = results_json_filename(args.name)
-		if args.override:
-			open(json_filename, 'w').close()
-		mine(args, json_filename, (max(0, args.si), min(args.ei, SEARCH_UPPER_LIMIT)), search_URL)
+		mine(args, main_result_file, (max(0, args.si), min(args.ei, SEARCH_UPPER_LIMIT)), search_URL)
 
 	print(time.clock() - t),
 
@@ -449,7 +467,7 @@ if __name__ == "__main__":
 	parser.add_argument('-l', default='Canada', metavar='location', help='location scope for search')
 	parser.add_argument('-si', default=0, type=int, metavar='start', help='starting index (multiples of 50)')
 	parser.add_argument('-ei', default=1050, type=int, metavar='end', help='ending index (multiples of 50)')
-	parser.add_argument('--threads', default=8, type=int, metavar='threads', help='# of threads to run')
+	parser.add_argument('--processes', default=1, type=int, metavar='processes', help='# of processes to run (max %d)' % MAX_PROCESSORS)
 	parser.add_argument('--override', default=False, action='store_true', help='override existing result if any')
 	parser.add_argument('--driver', default=FIREFOX, choices=[FIREFOX, CHROME])
 	parser.add_argument('--login', default=False, action=LoginAction, help='Simulate logging in as a user (read README further for details)')
@@ -460,8 +478,13 @@ if __name__ == "__main__":
 	# in case of carrige returns
 	args.q = args.q.strip()
 	args.l = args.l.strip()
-	args.name = args.name.lower().strip()
+
+	# reformat
+	args.name = args.name.strip()
 	args.name = args.name.replace(' ', '-')
+
+	# constrain
+	args.processes = max(min(args.processes, MAX_PROCESSORS), 1)
 
 	# setup logging
 	logging.basicConfig(level=logging.INFO, format='%(asctime)s - [%(processName)s:%(levelname)s] %(message)s')
