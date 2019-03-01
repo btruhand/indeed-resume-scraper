@@ -27,7 +27,9 @@ PATH=$(pwd):$PATH
 
 ```bash
 usage: indeed-scraper.py [-h] -q query --name name [-l location] [-si start]
-                         [-ei end] [--override] [--driver {firefox,chrome}]
+                         [-ei end] [--processes processes] [--override]
+                         [--driver {firefox,chrome}] [--login]
+                         [--simulate-user]
 
 Scrape Indeed Resumes
 
@@ -35,9 +37,15 @@ optional arguments:
   -h, --help            show this help message and exit
   -l location           location scope for search (default: Canada)
   -si start             starting index (multiples of 50) (default: 0)
-  -ei end               ending index (multiples of 50) (default: 5000)
+  -ei end               ending index (multiples of 50) (default: 1050)
+  --processes processes
+                        # of processes to run (max 4) (default: 1)
   --override            override existing result if any (default: False)
   --driver {firefox,chrome}
+  --login               Simulate logging in as a user (read README further for
+                        details) (default: False)
+  --simulate-user       Whether to simulate user clicks or not (slower)
+                        (default: False)
 
 required arguments:
   -q query              search query to run on indeed e.g software engineer
@@ -46,15 +54,27 @@ required arguments:
                         "-") (default: None)
 ```
 
-## Running on SFU labs
-Because you can't seem to install dependencies in the school computers, it's a bit of a hassle but you can try do the following:
-```bash
-python3 -m venv venv $(pwd) --system-site-packages
-source bin/activate # need to do this everytime you create a new terminal session
-pip install -r requirements.txt
-```
+## Simulating logging in
+It seems that Indeed blocks non-loggedin user to get resume results above a certain point
+(so far the ceiling seems to be 1050 resumes). However logging in seems to circumvent this.
 
-This should setup the necessary dependencies
+The `--login` option allows you to do this. You would need to set the environemnt variables
+`INDEED_RESUME_USER` and `INDEED_RESUME_PASSWORD`. If not, the program will exit telling you
+that you need to set those environment variables.
+
+Due to the restriction that Indeed imposes for non login scraping, `-si` and `-ei` options
+are automatically constrained to `0` and `1050` respectively when `--login` option is not specified
+
+## Simulating user behaviour
+User behaviour can be simulated using the `--simulate-user` option. Using this, it seems that
+throttling is severely mitigated, and overall helps for a smoother scraping experience
+
+## Multiprocessing
+By default the program runs with one process, but the `--processes` option can be given to indicate
+the number of processes to use. The maximum number of processes allowed is `4`.
+
+**NOTE**: If more than `1` process is to be used it is highly encouraged to turn on `--simulate-user` due to throttling
+mechanisms. Higher number of processes also may incur further throttling so be careful.
 
 ## Example
 Scrape 100 resumes (1st - 100th resume) for software engineering in Canada
