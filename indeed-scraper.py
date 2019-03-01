@@ -26,7 +26,7 @@ NUM_INDEED_RESUME_RESULTS = 50
 INDEED_RESUME_BASE_URL = 'https://resumes.indeed.com/resume/%s'
 INDEED_RESUME_SEARCH_BASE_URL = 'https://resumes.indeed.com/search?%s'
 INDEED_LOGIN_URL = 'https://secure.indeed.com/account/login'
-SEARCH_UPPER_LIMIT = 1050
+NO_LOGIN_SEARCH_UPPER_LIMIT = 1050
 MAX_PROCESSORS = 4
 
 # RESUME SUBSECTIONS TITLE (in normal setting)
@@ -432,11 +432,10 @@ def main(args):
 	if args.override:
 		open(main_result_file, 'w').close()
 
-	if args.login and args.processes != 1:
-		# can do multi-process work
+	if args.processes != 1:
 		mine_multi(args, main_result_file, search_URL)
 	else:
-		mine(args, main_result_file, (max(0, args.si), min(args.ei, SEARCH_UPPER_LIMIT)), search_URL)
+		mine(args, main_result_file, (args.si, args.ei), search_URL)
 
 	print(time.clock() - t),
 
@@ -466,7 +465,7 @@ if __name__ == "__main__":
 
 	parser.add_argument('-l', default='Canada', metavar='location', help='location scope for search')
 	parser.add_argument('-si', default=0, type=int, metavar='start', help='starting index (multiples of 50)')
-	parser.add_argument('-ei', default=1050, type=int, metavar='end', help='ending index (multiples of 50)')
+	parser.add_argument('-ei', default=NO_LOGIN_SEARCH_UPPER_LIMIT, type=int, metavar='end', help='ending index (multiples of 50)')
 	parser.add_argument('--processes', default=1, type=int, metavar='processes', help='# of processes to run (max %d)' % MAX_PROCESSORS)
 	parser.add_argument('--override', default=False, action='store_true', help='override existing result if any')
 	parser.add_argument('--driver', default=FIREFOX, choices=[FIREFOX, CHROME])
@@ -485,6 +484,9 @@ if __name__ == "__main__":
 
 	# constrain
 	args.processes = max(min(args.processes, MAX_PROCESSORS), 1)
+	if not args.login:
+		args.si = 0
+		args.ei = 1050
 
 	# setup logging
 	logging.basicConfig(level=logging.INFO, format='%(asctime)s - [%(processName)s:%(levelname)s] %(message)s')

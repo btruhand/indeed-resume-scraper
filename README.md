@@ -52,7 +52,21 @@ It seems that Indeed blocks non-loggedin user to get resume results above a cert
 
 The `--login` option allows you to do this. You would need to set the environemnt variables
 `INDEED_RESUME_USER` and `INDEED_RESUME_PASSWORD`. If not, the program will exit telling you
-that you need to set those environment variables
+that you need to set those environment variables.
+
+Due to the restriction that Indeed imposes for non login scraping, `-si` and `-ei` options
+are automatically constrained to `0` and `1050` respectively when `--login` option is not specified
+
+## Simulating user behaviour
+User behaviour can be simulated using the `--simulate-user` option. Using this, it seems that
+throttling is severely mitigated, and overall helps for a smoother scraping experience
+
+## Multiprocessing
+By default the program runs with one process, but the `--processes` option can be given to indicate
+the number of processes to use. The maximum number of processes allowed is `4`.
+
+**NOTE**: If more than `1` process is to be used it is highly encouraged to turn on `--simulate-user` due to throttling
+mechanisms. Higher number of processes also may incur further throttling so be careful.
 
 ## Example
 Scrape 100 resumes (1st - 100th resume) for software engineering in Canada
