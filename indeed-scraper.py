@@ -1,5 +1,3 @@
-import urllib.request
-import requests
 from selenium.webdriver import firefox, chrome
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.common.keys import Keys
@@ -10,7 +8,6 @@ from selenium.common.exceptions import TimeoutException, NoSuchElementException
 from bs4 import BeautifulSoup
 import time
 import json
-import threading
 from random import randint
 from time import sleep
 from math import ceil
@@ -19,9 +16,9 @@ import argparse
 from urllib.parse import quote_plus, urlencode
 import traceback
 import sys
-import glob
 import concurrent.futures
 import platform
+import logging
 
 # SCRAPING NECESSITY
 NUM_INDEED_RESUME_RESULTS = 50
@@ -190,21 +187,21 @@ def produce_additional(infosection):
 def produce_summary(summarysection):
 	summary_details = []
 	if len(summarysection) == 4:
-  		summary_details = summarysection.contents[-1]
-  		summary_details = [detail for detail in summary_details.stripped_strings]
+		summary_details = summarysection.contents[-1]
+		summary_details = [detail for detail in summary_details.stripped_strings]
 
 	return summary_details
 
 
 def gen_resume(resume_link, driver):
 	idd = resume_link[resume_link.rfind('/') + 1:resume_link.rfind('?')]
-	print('Processing resume ID', idd)
+	logging.info('Processing resume ID %s', idd)
 	try:
 		WebDriverWait(driver, MAX_WAIT).until(
 			EC.visibility_of_any_elements_located((By.CLASS_NAME, 'rezemp-ResumeDisplay-body'))
 		)
 	except TimeoutException:
-		sys.stderr.write('Unable to get resume for ID %s, abandoning fetch' % idd)
+		logging.error('Unable to get resume for ID %s, abandoning fetch', idd)
 		return None
 
 	p_element = driver.page_source
@@ -229,7 +226,7 @@ def gen_resume(resume_link, driver):
 		elif subsection_title == ADDITIONAL_INFORMATION:
 			resume_details['additional'] = produce_additional(subsection)
 		else:
-			print('ID', idd, '- Subsection title is', subsection_title)
+			logging.warn('ID %s - Subsection title is %s', idd, subsection_title)
 
 	return Resume(idd, **resume_details)
 
@@ -239,12 +236,25 @@ def go_to_next_search_page(driver):
 		# not sure why but next_button.click() does not always work across firefox and chrome
 		driver.execute_script("arguments[0].click();", next_button)
 	except NoSuchElementException:
-		print('No more pages to go to')
+		logging.info('No more pages to go to')
 		return False
 
 	return True
 
-def mine(args, json_file, search_range, search_URL):
+def simulate_login(args, driver, search_point):
+	login_url = INDEED_LOGIN_URL + '?' + urlencode({'service': 'roz', 'continue': search_point}, safe='%')
+	driver.get(login_url)
+	email = driver.find_element_by_id('login-email-input')
+	password = driver.find_element_by_id('login-password-input')
+	email.send_keys(args.user)
+	password.send_keys(args.password)
+
+	submission_button = driver.find_element_by_id('login-submit-button')
+	submission_button.submit()
+
+	WebDriverWait(driver, MAX_WAIT).until(EC.url_to_be(search_point))
+
+def mine(args, json_filename, search_range, search_URL):
 	if args.driver == FIREFOX:
 		fp = firefox.firefox_profile.FirefoxProfile()
 		fp.set_preference("browser.tabs.remote.autostart", False)
@@ -262,8 +272,14 @@ def mine(args, json_file, search_range, search_URL):
 	# actions = ActionChains(driver)
 	try:
 		search_point = search_URL + '&' + urlencode({'start': search})
+		json_file = open(json_filename, 'w' if args.override else 'a')
+
+		if args.login:
+			simulate_login(args, driver, search_point)
+		else:
+			driver.get(search_point)
+
 		continue_search = True
-		driver.get(search_point)
 		main_window = driver.current_window_handle
 		while search < end and continue_search:
 			link_elements = gen_resume_link_elements(driver)
@@ -292,12 +308,18 @@ def mine(args, json_file, search_range, search_URL):
 						json_file.write(resume.toJSON() + "\n")
 					search += 1
 
-				print('Finished getting %d resumes, going to sleep a bit' % search)
-				time.sleep(SLEEP_TIME)			
+				logging.info('Finished getting resumes up to %d index, going to sleep a bit', search)
+				time.sleep(SLEEP_TIME)
 				continue_search = go_to_next_search_page(driver)
+	except Exception:
+		traceback.print_exc()
+		logging.error('Caught exception finishing mining soon')
 	finally:
-		print('Driver shutting down')
+		logging.info('Driver shutting down')
+		json_file.close()
 		driver.close()
+	
+	return json_filename
 
 def mine_multi(args, search_URL):
 	start = args.si
@@ -305,48 +327,37 @@ def mine_multi(args, search_URL):
 	tr = args.threads
 	steps = ceil((end - start) / tr)
 	starting_points = list(range(start, end, steps))
+	print(starting_points)
 	fs = []
 
-	with concurrent.futures.ThreadPoolExecutor(max_workers=tr) as executor:
+	with concurrent.futures.ThreadPoolExecutor(max_workers=tr, thread_name_prefix='miners') as executor:
 		for idx, search_start in enumerate(starting_points):
 			# Instantiates the thread
-			filename = OUTPUT_BASE_NAME + args.name + str(idx) + '.json'
+			filename = results_json_filename(args.name, str(idx))
 			search_range = (search_start, end if idx + 1 == len(starting_points) else starting_points[idx + 1])
-			mine_args = (filename, search_URL)
-			mine_kwargs = {
-				"override" : args.override,
-				"search_range" : search_range,
-				"steps": min(end - starting_points[idx], steps, NUM_INDEED_RESUME_RESULTS),
-				"driver": args.driver
-			}
-			fs.append(executor.submit(mine, *mine_args, **mine_kwargs))
+			mine_args = (args, filename, search_range, search_URL)
+			fs.append(executor.submit(mine, *mine_args))
 			
-		filenames = []
+		potential_results = []
 		try:
 			for fut in concurrent.futures.as_completed(fs):
-				filenames.append(fut.result())
-		except (KeyboardInterrupt, Exception) as e:
-			traceback.print_exc()
-			sys.stderr.write('Caught exception %s of type %s, cleaning up results\n' % (str(e), type(e)))
-			clean_up_all_results(args.name)
-		else:
-			consolidate_files(args.name, filenames, args.override)
+				potential_results.append(fut.result())
+		except KeyboardInterrupt:
+			logging.warn('Mining interrupted by user, joining results and exiting soon...')
+		finally:
+			# redo it again since we have interrupted them using keyboard
+			for fut in concurrent.futures.as_completed(fs):
+				result_file = fut.result()
+				if result_file not in potential_results:
+					potential_results.append(result_file)
+			consolidate_files(args.name, potential_results)
 
-def consolidate_files(name, names, override=True):
-	mode = 'w' if override else 'a'
-	file = open("resume_output_" + name + ".json", mode)
-	for nam in names:
-		with open(nam, 'r') as read:
-			file.write(read.read())
-		os.remove(nam)
-			
-	file.close()
-
-def clean_up_all_results(name):
-	output_glob = OUTPUT_BASE_NAME + name + '*' + '.json'
-	files = glob.glob(output_glob)
-	for file in files:
-		os.remove(file)
+def consolidate_files(name, subresult_files):
+	with open(results_json_filename(name), 'w') as result_json_file:
+		for subresult in subresult_files:
+			with open(subresult, 'r') as f:
+				result_json_file.write(f.read())
+			os.remove(subresult)
 
 def results_json_filename(name, suffix=''):
 	return OUTPUT_BASE_NAME + name + suffix + '.json'
@@ -370,8 +381,7 @@ def main(args):
 		json_filename = results_json_filename(args.name)
 		if args.override:
 			open(json_filename, 'w').close()
-		with open(json_filename, 'a') as json_file:
-			mine(args, json_file, (max(0, args.si), min(args.ei, SEARCH_UPPER_LIMIT)), search_URL)
+		mine(args, json_filename, (max(0, args.si), min(args.ei, SEARCH_UPPER_LIMIT)), search_URL)
 
 	print(time.clock() - t),
 
@@ -414,4 +424,7 @@ if __name__ == "__main__":
 	args.l = args.l.strip()
 	args.name = args.name.lower().strip()
 	args.name = args.name.replace(' ', '-')
+
+	# setup logging
+	logging.basicConfig(level=logging.INFO, format='%(asctime)s - [%(threadName)s:%(levelname)s] %(message)s')
 	main(args)
