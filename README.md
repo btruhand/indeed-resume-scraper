@@ -27,7 +27,9 @@ PATH=$(pwd):$PATH
 
 ```bash
 usage: indeed-scraper.py [-h] -q query --name name [-l location] [-si start]
-                         [-ei end] [--override] [--driver {firefox,chrome}]
+                         [-ei end] [--processes processes] [--override]
+                         [--driver {firefox,chrome}] [--login]
+                         [--simulate-user]
 
 Scrape Indeed Resumes
 
@@ -35,9 +37,15 @@ optional arguments:
   -h, --help            show this help message and exit
   -l location           location scope for search (default: Canada)
   -si start             starting index (multiples of 50) (default: 0)
-  -ei end               ending index (multiples of 50) (default: 5000)
+  -ei end               ending index (multiples of 50) (default: 1050)
+  --processes processes
+                        # of processes to run (max 4) (default: 1)
   --override            override existing result if any (default: False)
   --driver {firefox,chrome}
+  --login               Simulate logging in as a user (read README further for
+                        details) (default: False)
+  --simulate-user       Whether to simulate user clicks or not (slower)
+                        (default: False)
 
 required arguments:
   -q query              search query to run on indeed e.g software engineer
