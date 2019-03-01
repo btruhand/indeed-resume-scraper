@@ -327,7 +327,7 @@ if __name__ == "__main__":
 	)
 	required_arguments = parser.add_argument_group(title='required arguments')
 	required_arguments.add_argument('-q', metavar='query', required=True, help='search query to run on indeed e.g software engineer')
-	required_arguments.add_argument('--name', metavar='name', required=True, help='name of search (used to save files, spaces turned to "-")')
+	required_arguments.add_argument('--name', metavar='name', required=True, help='name of search (used to save files, lowercased and spaces turned to "-")')
 
 	parser.add_argument('-l', default='Canada', metavar='location', help='location scope for search')
 	parser.add_argument('-si', default=0, type=int, metavar='start', help='starting index (multiples of 50)')
@@ -340,6 +340,6 @@ if __name__ == "__main__":
 	# in case of carrige returns
 	args.q = args.q.strip()
 	args.l = args.l.strip()
-	args.name = args.name.strip()
+	args.name = args.name.lower().strip()
 	args.name = args.name.replace(' ', '-')
 	main(args)
