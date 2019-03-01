@@ -437,7 +437,7 @@ def main(args):
 	else:
 		mine(args, main_result_file, (args.si, args.ei), search_URL)
 
-	print(time.clock() - t),
+	logging.info('Finished scraping in %f seconds', time.perf_counter() - t)
 
 class LoginAction(argparse.Action):
 	def __init__(self, option_strings, dest, nargs=None, **kwargs):
