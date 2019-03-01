@@ -104,6 +104,18 @@ class Info:
 	def __init__(self, details):
 		self.details = details
 
+# create expected condition that returns True when all is True
+class AllExpectedCondition:
+	def __init__(self, *ecs):
+		self.ecs = ecs
+	
+	def __call__(self, driver):
+		for ec in self.ecs:
+			# refer to https://stackoverflow.com/questions/16462177/selenium-expected-conditions-possible-to-use-or
+			if not ec(driver):
+				return False
+		return True
+
 def gen_resume_link_elements(driver):
 	"""Generate IDDs of resume
 	
@@ -192,13 +204,15 @@ def produce_summary(summarysection):
 
 	return summary_details
 
-
 def gen_resume(resume_link, driver):
 	idd = resume_link[resume_link.rfind('/') + 1:resume_link.rfind('?')]
 	logging.info('Processing resume ID %s', idd)
 	try:
 		WebDriverWait(driver, MAX_WAIT).until(
-			EC.visibility_of_any_elements_located((By.CLASS_NAME, 'rezemp-ResumeDisplay-body'))
+			AllExpectedCondition(
+				EC.visibility_of_any_elements_located((By.CLASS_NAME, 'rezemp-ResumeDisplay-body')),
+				EC.url_to_be(resume_link)
+			)
 		)
 	except TimeoutException:
 		logging.error('Unable to get resume for ID %s, abandoning fetch', idd)
@@ -254,6 +268,31 @@ def simulate_login(args, driver, search_point):
 
 	WebDriverWait(driver, MAX_WAIT).until(EC.url_to_be(search_point))
 
+def simulation_algorithm(driver, link_elements, main_window):
+	resumes = []
+	for link in link_elements:
+		resume_link = link.get_attribute('href')
+
+		# seems to not work for firefox (at least on MAC)
+		# actions.reset_actions()
+		# actions.key_down(CTRL_COMMAND, link).click(link).perform()
+		link.send_keys(CTRL_COMMAND + Keys.SHIFT + Keys.RETURN) # without shift firefox seems to not work on Mac
+		driver.switch_to.window(driver.window_handles[1])
+		resumes.append(gen_resume(resume_link, driver))
+		driver.close()
+		driver.switch_to.window(main_window)
+	return resumes
+
+def non_simulation_algorithm(driver, resume_links, return_url):
+	resumes = []
+	for link in resume_links:
+		driver.get(link)
+		resumes.append(gen_resume(link, driver))
+	
+	# return back to some return URL
+	driver.get(return_url)
+	return resumes
+
 def mine(args, json_filename, search_range, search_URL):
 	if args.driver == FIREFOX:
 		fp = firefox.firefox_profile.FirefoxProfile()
@@ -294,19 +333,17 @@ def mine(args, json_filename, search_range, search_URL):
 				sys.stderr.write('Unable to find any resumes at index %d. Reached max attempts, abandoning search...\n' % search)
 				continue_search = False
 			else:
-				for link in link_elements[:min(len(link_elements), end - search)]:
-					resume_link = link.get_attribute('href')
-					# seems to not work for firefox (at least on MAC)
-					# actions.reset_actions()
-					# actions.key_down(CTRL_COMMAND, link).click(link).perform()
-					link.send_keys(CTRL_COMMAND + Keys.SHIFT + Keys.RETURN) # without shift firefox seems to not work on Mac
-					driver.switch_to.window(driver.window_handles[1])
-					resume = gen_resume(resume_link, driver)
-					driver.close()
-					driver.switch_to.window(main_window)
+				link_elements = link_elements[:min(len(link_elements), end - search)]
+				if args.simulate:
+					resumes = simulation_algorithm(driver, link_elements, main_window)
+				else:
+					links = [link.get_attribute('href') for link in link_elements]
+					resumes = non_simulation_algorithm(driver, links, driver.current_url)
+				
+				for resume in resumes:
 					if resume is not None:
 						json_file.write(resume.toJSON() + "\n")
-					search += 1
+				search += len(resumes)
 
 				logging.info('Finished getting resumes up to %d index, going to sleep a bit', search)
 				time.sleep(SLEEP_TIME)
@@ -330,7 +367,7 @@ def mine_multi(args, search_URL):
 	print(starting_points)
 	fs = []
 
-	with concurrent.futures.ThreadPoolExecutor(max_workers=tr, thread_name_prefix='miners') as executor:
+	with concurrent.futures.ProcessPoolExecutor(max_workers=tr) as executor:
 		for idx, search_start in enumerate(starting_points):
 			# Instantiates the thread
 			filename = results_json_filename(args.name, str(idx))
@@ -416,6 +453,7 @@ if __name__ == "__main__":
 	parser.add_argument('--override', default=False, action='store_true', help='override existing result if any')
 	parser.add_argument('--driver', default=FIREFOX, choices=[FIREFOX, CHROME])
 	parser.add_argument('--login', default=False, action=LoginAction, help='Simulate logging in as a user (read README further for details)')
+	parser.add_argument('--simulate-user', default=False, dest='simulate', action='store_true', help='Whether to simulate user clicks or not (slower)')
 
 	args = parser.parse_args()
 
@@ -426,5 +464,5 @@ if __name__ == "__main__":
 	args.name = args.name.replace(' ', '-')
 
 	# setup logging
-	logging.basicConfig(level=logging.INFO, format='%(asctime)s - [%(threadName)s:%(levelname)s] %(message)s')
+	logging.basicConfig(level=logging.INFO, format='%(asctime)s - [%(processName)s:%(levelname)s] %(message)s')
 	main(args)

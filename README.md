@@ -46,15 +46,13 @@ required arguments:
                         "-") (default: None)
 ```
 
-## Running on SFU labs
-Because you can't seem to install dependencies in the school computers, it's a bit of a hassle but you can try do the following:
-```bash
-python3 -m venv venv $(pwd) --system-site-packages
-source bin/activate # need to do this everytime you create a new terminal session
-pip install -r requirements.txt
-```
+## Simulating logging in
+It seems that Indeed blocks non-loggedin user to get resume results above a certain point
+(so far the ceiling seems to be 1050 resumes). However logging in seems to circumvent this.
 
-This should setup the necessary dependencies
+The `--login` option allows you to do this. You would need to set the environemnt variables
+`INDEED_RESUME_USER` and `INDEED_RESUME_PASSWORD`. If not, the program will exit telling you
+that you need to set those environment variables
 
 ## Example
 Scrape 100 resumes (1st - 100th resume) for software engineering in Canada
