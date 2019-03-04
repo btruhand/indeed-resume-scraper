@@ -50,7 +50,7 @@ CHROME = 'chrome'
 
 # LOGIC
 MAX_RETRIES = 3
-SLEEP_TIME = 5 
+SLEEP_TIME = 5
 MAX_WAIT = 3
 CTRL_COMMAND = Keys.COMMAND if platform.platform() == 'Darwin' else Keys.CONTROL
 
@@ -110,7 +110,7 @@ class Info:
 class AllExpectedCondition:
 	def __init__(self, *ecs):
 		self.ecs = ecs
-	
+
 	def __call__(self, driver):
 		for ec in self.ecs:
 			# refer to https://stackoverflow.com/questions/16462177/selenium-expected-conditions-possible-to-use-or
@@ -138,7 +138,7 @@ def go_to_page(driver, url):
 
 def gen_resume_link_elements(driver):
 	"""Generate IDDs of resume
-	
+
 	Assumes driver already in page with resume IDDs
 	Returns list of WebElement
 	"""
@@ -148,7 +148,7 @@ def gen_resume_link_elements(driver):
 			'div.rezemp-ResumeSearchCard .icl-TextLink.icl-TextLink--primary.rezemp-u-h4'
 		)
 	except TimeoutException:
-		# could not complete in time 
+		# could not complete in time
 		resume_links = []
 
 	return resume_links
@@ -314,7 +314,7 @@ def non_simulation_algorithm(driver, resume_links, json_file, return_url):
 				json_file.write(resume.toJSON() + "\n")
 		else:
 			logging.error('Not able to go to resume page in time')
-	
+
 	# return back to some return URL
 	while not go_to_page(driver, return_url):
 		# just pass
@@ -368,7 +368,7 @@ def mine(args, json_filename, search_range, search_URL):
 				else:
 					links = [link.get_attribute('href') for link in link_elements]
 					non_simulation_algorithm(driver, links, json_file, driver.current_url)
-				
+
 				logging.info('Finished getting resumes up to %d index, going to sleep a bit', search)
 				time.sleep(SLEEP_TIME)
 				continue_search = go_to_next_search_page(driver)
@@ -395,7 +395,7 @@ def mine_multi(args, main_result_file, search_URL):
 			search_range = (search_start, end if idx + 1 == len(starting_points) else starting_points[idx + 1])
 			mine_args = (args, filename, search_range, search_URL)
 			fs.append(executor.submit(mine, *mine_args))
-			
+
 		try:
 			# wait for all to finish
 			concurrent.futures.wait(fs)
@@ -408,7 +408,7 @@ def consolidate_files(name, main_result_file, override=False):
 	glob_results_file = results_json_filename(name, suffix='*')
 	with open(main_result_file, 'a') as result_json_file:
 		for results_file in glob.glob(glob_results_file):
-			if main_result_file != results_file: 
+			if main_result_file != results_file:
 				with open(results_file, 'r') as f:
 					result_json_file.write(f.read())
 				os.remove(results_file)
@@ -482,12 +482,14 @@ if __name__ == "__main__":
 	args.name = args.name.strip()
 	args.name = args.name.replace(' ', '-')
 
+	# setup logging
+	logging.basicConfig(level=logging.INFO, format='%(asctime)s - [%(processName)s:%(levelname)s] %(message)s')
+
 	# constrain
 	args.processes = max(min(args.processes, MAX_PROCESSORS), 1)
 	if not args.login:
+		logging.warn('Login not specified, limiting starting search point to 0 and ending point at %d', NO_LOGIN_SEARCH_UPPER_LIMIT)
 		args.si = 0
-		args.ei = 1050
+		args.ei = min(args.ei, NO_LOGIN_SEARCH_UPPER_LIMIT)
 
-	# setup logging
-	logging.basicConfig(level=logging.INFO, format='%(asctime)s - [%(processName)s:%(levelname)s] %(message)s')
 	main(args)
