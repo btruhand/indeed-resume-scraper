@@ -263,16 +263,24 @@ def gen_resume(resume_link, driver):
 
 	return Resume(idd, **resume_details)
 
-def go_to_next_search_page(driver):
+def next_page_button(driver):
 	try:
-		next_button = driver.find_element_by_class_name('rezemp-pagination-nextbutton')
-		# not sure why but next_button.click() does not always work across firefox and chrome
-		driver.execute_script("arguments[0].click();", next_button)
+		return driver.find_element_by_class_name('rezemp-pagination-nextbutton')
 	except NoSuchElementException:
-		logging.info('No more pages to go to')
-		return False
+		return None
 
-	return True
+def go_to_next_search_page(driver, simulate, next_button, url):
+	if simulate:
+		try:
+			# not sure why but next_button.click() does not always work across firefox and chrome
+			driver.execute_script("arguments[0].click();", next_button)
+		except NoSuchElementException:
+			logging.info('No more pages to go to')
+			return False
+		return True
+	else:
+		# if not user simulation then go to search page directly
+		go_to_page(driver, url)
 
 def simulate_login(args, driver, search_point):
 	login_url = INDEED_LOGIN_URL + '?' + urlencode({'service': 'roz', 'continue': search_point}, safe='%')
@@ -349,18 +357,25 @@ def mine(args, json_filename, search_range, search_URL):
 		continue_search = True
 		main_window = driver.current_window_handle
 		while search < end and continue_search:
+			# implicitly also waits for alert box to show up
 			link_elements = gen_resume_link_elements(driver)
 
 			if len(link_elements) == 0:
-				if attempts < MAX_RETRIES:
-					# attempt retry
-					logging.error('Unable to find any resumes at index %d. Retrying in %d seconds...', search, SLEEP_TIME)
-					attempts += 1
-					time.sleep(SLEEP_TIME)
+				# alert box showed and it is a simulated run
+				if is_alert_present(driver):
+					if attempts < MAX_RETRIES:
+						# attempt retry
+						logging.error('Unable to find any resumes at index %d. Retrying in %d seconds...', search, SLEEP_TIME)
+						attempts += 1
+						time.sleep(SLEEP_TIME)
+					else:
+						logging.error('Unable to find any resumes at index %d. Reached max attempts, abandoning search...', search)
+						continue_search = False
 				else:
-					logging.error('Unable to find any resumes at index %d. Reached max attempts, abandoning search...', search)
+					# assumes that search has actually finished
 					continue_search = False
 			else:
+				next_button = next_page_button(driver)
 				link_elements = link_elements[:min(len(link_elements), end - search)]
 				search += len(link_elements)
 				if args.simulate:
@@ -371,7 +386,13 @@ def mine(args, json_filename, search_range, search_URL):
 
 				logging.info('Finished getting resumes up to %d index, going to sleep a bit', search)
 				time.sleep(SLEEP_TIME)
-				continue_search = go_to_next_search_page(driver)
+				if next_button is None:
+					logging.info('No more pages to go to')
+					continue_search = False
+				else:
+					continue_search = True
+					next_search_url = search_URL + '&' + urlencode({'start': search})
+					go_to_next_search_page(driver, args.simulate, next_button, next_search_url)
 	except (TimeoutException, Exception):
 		traceback.print_exc()
 		logging.error('Caught exception finishing mining soon')
