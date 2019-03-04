@@ -1,5 +1,13 @@
 *.json
 *.log
 *.zip
-geckodriver
-chromedriver
+*.csv
+geckodriver*
+chromedriver*
+
+# venv things
+bin
+venv
+lib
+lib64
+pyvenv.cfg

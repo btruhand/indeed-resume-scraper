@@ -9,7 +9,7 @@ FILE=$1
 
 while read -u 3 job || [ -n "$job" ]; do
     echo "Searching resumes for ${job}"
-    python3 indeed-scraper.py -q "$job" --name "$job" -ei 1050 --override
+    python3 indeed-resume-scraper.py -q "$job" --name "$job" -ei 1050 --override --driver chrome
     read -u 1 -t 5 -p "Stop searching? (y/n) " isStop
     if [[ "$isStop" == "y" || -z "$isStop" ]]; then
         break
