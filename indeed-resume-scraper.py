@@ -340,8 +340,8 @@ def mine(args, json_filename, search_range, search_URL):
 	driver.implicitly_wait(MAX_WAIT)
 	driver.set_page_load_timeout(MAX_WAIT)
 
-	search = args.si
-	end = args.ei
+	search = search_range[0]
+	end = search_range[1]
 
 	attempts = 0
 	try:
@@ -362,17 +362,15 @@ def mine(args, json_filename, search_range, search_URL):
 
 			if len(link_elements) == 0:
 				# alert box showed and it is a simulated run
-				if is_alert_present(driver):
-					if attempts < MAX_RETRIES:
-						# attempt retry
-						logging.error('Unable to find any resumes at index %d. Retrying in %d seconds...', search, SLEEP_TIME)
-						attempts += 1
-						time.sleep(SLEEP_TIME)
-					else:
-						logging.error('Unable to find any resumes at index %d. Reached max attempts, abandoning search...', search)
-						continue_search = False
+				if attempts < MAX_RETRIES:
+					# attempt retry
+					logging.error('Unable to find any resumes at index %d. Retrying in %d seconds...', search, SLEEP_TIME)
+					attempts += 1
+					time.sleep(SLEEP_TIME)
+					# refresh page assuming page is search page
+					driver.refresh()
 				else:
-					# assumes that search has actually finished
+					logging.error('Unable to find any resumes at index %d. Reached max attempts, abandoning search...', search)
 					continue_search = False
 			else:
 				next_button = next_page_button(driver)
@@ -406,7 +404,6 @@ def mine_multi(args, main_result_file, search_URL):
 	end = args.ei
 	steps = ceil((end - start) / args.processes)
 	starting_points = list(range(start, end, steps))
-	print(starting_points)
 	fs = []
 
 	with concurrent.futures.ProcessPoolExecutor(max_workers=args.processes) as executor:
@@ -416,7 +413,6 @@ def mine_multi(args, main_result_file, search_URL):
 			search_range = (search_start, end if idx + 1 == len(starting_points) else starting_points[idx + 1])
 			mine_args = (args, filename, search_range, search_URL)
 			fs.append(executor.submit(mine, *mine_args))
-
 		try:
 			# wait for all to finish
 			concurrent.futures.wait(fs)
