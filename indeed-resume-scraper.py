@@ -50,8 +50,10 @@ CHROME = 'chrome'
 
 # LOGIC
 MAX_RETRIES = 3
-SLEEP_TIME = 5
-MAX_WAIT = 3
+SLEEP_TIME = 5 
+EXPLICIT_MAX_WAIT = 3
+IMPLICIT_MAX_WAIT = 5
+PAGE_LOAD_WAIT = 5
 CTRL_COMMAND = Keys.COMMAND if platform.platform() == 'Darwin' else Keys.CONTROL
 
 # ENVIRONMENT
@@ -227,7 +229,7 @@ def gen_resume(resume_link, driver):
 	idd = resume_link[resume_link.rfind('/') + 1:resume_link.rfind('?')]
 	logging.info('Processing resume ID %s', idd)
 	try:
-		WebDriverWait(driver, MAX_WAIT).until(
+		WebDriverWait(driver, EXPLICIT_MAX_WAIT).until(
 			AllExpectedCondition(
 				EC.visibility_of_any_elements_located((By.CLASS_NAME, 'rezemp-ResumeDisplay-body')),
 				EC.url_to_be(resume_link)
@@ -296,16 +298,13 @@ def simulate_login(args, driver, search_point):
 	submission_button.submit()
 
 	# twice the wait due to how important it is
-	WebDriverWait(driver, MAX_WAIT * 2).until(EC.url_to_be(search_point))
+	WebDriverWait(driver, EXPLICIT_MAX_WAIT * 2).until(EC.url_to_be(search_point))
 
 def simulation_algorithm(driver, link_elements, json_file, main_window):
 	for link in link_elements:
 		resume_link = link.get_attribute('href')
 
-		# seems to not work for firefox (at least on MAC)
-		# actions.reset_actions()
-		# actions.key_down(CTRL_COMMAND, link).click(link).perform()
-		link.send_keys(CTRL_COMMAND + Keys.SHIFT + Keys.RETURN) # without shift firefox seems to not work on Mac
+		driver.execute_script('arguments[0].click()', link) # works consistently across brwosers
 		driver.switch_to.window(driver.window_handles[1])
 		resume = gen_resume(resume_link, driver)
 		driver.close()
@@ -328,17 +327,31 @@ def non_simulation_algorithm(driver, resume_links, json_file, return_url):
 		# just pass
 		pass
 
+def is_alert_present(driver):
+	try:
+		WebDriverWait(driver, EXPLICIT_MAX_WAIT).until(
+			EC.presence_of_element_located((By.CLASS_NAME, 'icl-Alert--danger'))
+		)
+		return True
+	except:
+		logging.warn('Unable to find alert box indicator, will report True')
+		return False
+
 def mine(args, json_filename, search_range, search_URL):
 	if args.driver == FIREFOX:
 		fp = firefox.firefox_profile.FirefoxProfile()
+		firefox_opts = firefox.options.Options()
+		firefox_opts.set_headless(args.headless)
 		fp.set_preference("browser.tabs.remote.autostart", False)
 		fp.set_preference("browser.tabs.remote.autostart.1", False)
 		fp.set_preference("browser.tabs.remote.autostart.2", False)
-		driver = firefox.webdriver.WebDriver(firefox_profile=fp)
+		driver = firefox.webdriver.WebDriver(firefox_profile=fp, options=firefox_opts)
 	else:
-		driver = chrome.webdriver.WebDriver()
-	driver.implicitly_wait(MAX_WAIT)
-	driver.set_page_load_timeout(MAX_WAIT)
+		chrome_opts = chrome.options.Options()
+		chrome_opts.set_headless(args.headless)
+		driver = chrome.webdriver.WebDriver(options=chrome_opts)
+	driver.implicitly_wait(IMPLICIT_MAX_WAIT)
+	driver.set_page_load_timeout(PAGE_LOAD_WAIT)
 
 	search = search_range[0]
 	end = search_range[1]
@@ -488,6 +501,7 @@ if __name__ == "__main__":
 	parser.add_argument('--driver', default=FIREFOX, choices=[FIREFOX, CHROME])
 	parser.add_argument('--login', default=False, action=LoginAction, help='Simulate logging in as a user (read README further for details)')
 	parser.add_argument('--simulate-user', default=False, dest='simulate', action='store_true', help='Whether to simulate user clicks or not (slower)')
+	parser.add_argument('--headless', default=False, dest='headless', action='store_true', help='Run browsers in headless mode')
 
 	args = parser.parse_args()
 
