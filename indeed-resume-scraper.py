@@ -29,6 +29,11 @@ INDEED_LOGIN_URL = 'https://secure.indeed.com/account/login'
 NO_LOGIN_SEARCH_UPPER_LIMIT = 1050
 MAX_PROCESSORS = 4
 
+COUNTRY_CODES = {
+	'canada': 'CA',
+	'united states': 'US'
+}
+
 # RESUME SUBSECTIONS TITLE (in normal setting)
 WORK_EXPERIENCE = 'Work Experience'
 EDUCATION = 'Education'
@@ -460,7 +465,9 @@ def main(args):
 		'q': args.q,
 		'l': args.l,
 		'searchFields': 'jt',
-		'lmd': 'all'
+		'lmd': 'all',
+		# country code apparently
+		'co': COUNTRY_CODES[args.l]
 	}
 	query_string = urlencode(query)
 	search_URL= INDEED_RESUME_SEARCH_BASE_URL % query_string
@@ -500,7 +507,7 @@ if __name__ == "__main__":
 	required_arguments.add_argument('-q', metavar='query', required=True, help='search query to run on indeed e.g software engineer')
 	required_arguments.add_argument('--name', metavar='name', required=True, help='name of search (used to save files, lowercased and spaces turned to "-")')
 
-	parser.add_argument('-l', default='Canada', metavar='location', help='location scope for search')
+	parser.add_argument('-l', default='canada', metavar='location', choices=['canada', 'united states'], help='location scope for search')
 	parser.add_argument('-si', default=0, type=int, metavar='start', help='starting index (multiples of 50)')
 	parser.add_argument('-ei', default=NO_LOGIN_SEARCH_UPPER_LIMIT, type=int, metavar='end', help='ending index (multiples of 50)')
 	parser.add_argument('--processes', default=1, type=int, metavar='processes', help='# of processes to run (max %d)' % MAX_PROCESSORS)
