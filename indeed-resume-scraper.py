@@ -365,8 +365,8 @@ def mine(args, json_filename, search_range, search_URL):
 	search = search_range[0]
 	end = search_range[1]
 
-	attempts = 0
 	try:
+		attempts = 0
 		search_point = search_URL + '&' + urlencode({'start': search})
 		json_file = open(json_filename, 'w' if args.override else 'a')
 
@@ -398,6 +398,7 @@ def mine(args, json_filename, search_range, search_URL):
 					logging.error('Unable to find any resumes at index %d. Reached max attempts, abandoning search...', search)
 					continue_search = False
 			else:
+				attempts = 0 # reset
 				next_button = next_page_button(driver)
 				search += len(link_elements)
 				if args.simulate:
