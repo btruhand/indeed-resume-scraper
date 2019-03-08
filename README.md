@@ -19,23 +19,26 @@ You would need to put it to some directory that is in your PATH e.g `/usr/local/
 Alertnatively you can put the drivers into this directory and add
 this directory into your path:
 
-```
+```bash
 PATH=$(pwd):$PATH
 ```
+
+You can also modify the `PATH` variable in files like `.bashrc` and `.bash_profile` to persist the change (though you would need to
+statically set the directory path of where you put the scraper folder and not use `$(pwd)`)
 
 # Running script
 
 ```bash
-usage: indeed-scraper.py [-h] -q query --name name [-l location] [-si start]
-                         [-ei end] [--processes processes] [--override]
-                         [--driver {firefox,chrome}] [--login]
-                         [--simulate-user]
+usage: indeed-resume-scraper.py [-h] -q query --name name [-l location]
+                                [-si start] [-ei end] [--processes processes]
+                                [--override] [--driver {firefox,chrome}]
+                                [--login] [--simulate-user] [--headless]
 
 Scrape Indeed Resumes
 
 optional arguments:
   -h, --help            show this help message and exit
-  -l location           location scope for search (default: Canada)
+  -l location           location scope for search (default: canada)
   -si start             starting index (multiples of 50) (default: 0)
   -ei end               ending index (multiples of 50) (default: 1050)
   --processes processes
@@ -46,12 +49,13 @@ optional arguments:
                         details) (default: False)
   --simulate-user       Whether to simulate user clicks or not (slower)
                         (default: False)
+  --headless            Run browsers in headless mode (default: False)
 
 required arguments:
   -q query              search query to run on indeed e.g software engineer
                         (default: None)
-  --name name           name of search (used to save files, spaces turned to
-                        "-") (default: None)
+  --name name           name of search (used to save files, lowercased and
+                        spaces turned to "-") (default: None)
 ```
 
 ## Simulating logging in
@@ -62,8 +66,17 @@ The `--login` option allows you to do this. You would need to set the environemn
 `INDEED_RESUME_USER` and `INDEED_RESUME_PASSWORD`. If not, the program will exit telling you
 that you need to set those environment variables.
 
+So you do the following
+```bash
+export INDEED_RESUME_USER=<your indeed login user>
+export INDEED_RESUME_PASSWORD=<your indeed user password>
+```
+
+You can do it for the current terminal session, or put it somewhere so it persists over sessions
+e.g your `.bashrc` or `.bash_profile` file.
+
 Due to the restriction that Indeed imposes for non login scraping, `-si` and `-ei` options
-are automatically constrained to `0` and `1050` respectively when `--login` option is not specified
+are automatically constrained to a minimum `0` and maximum of `1050` respectively when `--login` option is not specified
 
 ## Simulating user behaviour
 User behaviour can be simulated using the `--simulate-user` option. Using this, it seems that
