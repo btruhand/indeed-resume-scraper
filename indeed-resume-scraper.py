@@ -337,6 +337,10 @@ def is_alert_present(driver):
 		logging.warn('Unable to find alert box indicator, will report True')
 		return False
 
+def did_resume_links_change(old_links, new_links):
+	# no intersection between them
+	return len(set(old_links).intersection(new_links)) == 0
+
 def mine(args, json_filename, search_range, search_URL):
 	if args.driver == FIREFOX:
 		fp = firefox.firefox_profile.FirefoxProfile()
@@ -369,15 +373,18 @@ def mine(args, json_filename, search_range, search_URL):
 
 		continue_search = True
 		main_window = driver.current_window_handle
+		previous_link_elements = []
 		while search < end and continue_search:
 			# implicitly also waits for alert box to show up
 			link_elements = gen_resume_link_elements(driver)
+			link_elements = link_elements[:min(len(link_elements), end - search)]
+			resumes_changed = did_resume_links_change(previous_link_elements, link_elements)
 
-			if len(link_elements) == 0:
+			if len(link_elements) == 0 or not resumes_changed:
 				# alert box showed and it is a simulated run
 				if attempts < MAX_RETRIES:
 					# attempt retry
-					logging.error('Unable to find any resumes at index %d. Retrying in %d seconds...', search, SLEEP_TIME)
+					logging.error('Unable to find any changing resumes at index %d. Retrying in %d seconds...', search, SLEEP_TIME)
 					attempts += 1
 					time.sleep(SLEEP_TIME)
 					# refresh page assuming page is search page
@@ -387,7 +394,6 @@ def mine(args, json_filename, search_range, search_URL):
 					continue_search = False
 			else:
 				next_button = next_page_button(driver)
-				link_elements = link_elements[:min(len(link_elements), end - search)]
 				search += len(link_elements)
 				if args.simulate:
 					simulation_algorithm(driver, link_elements, json_file, main_window)
@@ -404,6 +410,7 @@ def mine(args, json_filename, search_range, search_URL):
 					continue_search = True
 					next_search_url = search_URL + '&' + urlencode({'start': search})
 					go_to_next_search_page(driver, args.simulate, next_button, next_search_url)
+				previous_link_elements = link_elements
 	except (TimeoutException, Exception):
 		traceback.print_exc()
 		logging.error('Caught exception finishing mining soon')
