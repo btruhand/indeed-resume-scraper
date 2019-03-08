@@ -276,18 +276,10 @@ def next_page_button(driver):
 	except NoSuchElementException:
 		return None
 
-def go_to_next_search_page(driver, simulate, next_button, url):
-	if simulate:
-		try:
-			# not sure why but next_button.click() does not always work across firefox and chrome
-			driver.execute_script("arguments[0].click();", next_button)
-		except NoSuchElementException:
-			logging.info('No more pages to go to')
-			return False
-		return True
-	else:
-		# if not user simulation then go to search page directly
-		go_to_page(driver, url)
+def go_to_next_search_page(driver, url):
+	# whether user simulation or not it seems it is just better to
+	# go to the page directly instead of click next button
+	go_to_page(driver, url)
 
 def simulate_login(args, driver, search_point):
 	login_url = INDEED_LOGIN_URL + '?' + urlencode({'service': 'roz', 'continue': search_point}, safe='%')
@@ -342,10 +334,6 @@ def is_alert_present(driver):
 		logging.warn('Unable to find alert box indicator, will report True')
 		return False
 
-def did_resume_links_change(old_links, new_links):
-	# no intersection between them
-	return len(set(old_links).intersection(new_links)) == 0
-
 def mine(args, json_filename, search_range, search_URL):
 	if args.driver == FIREFOX:
 		fp = firefox.firefox_profile.FirefoxProfile()
@@ -378,18 +366,15 @@ def mine(args, json_filename, search_range, search_URL):
 
 		continue_search = True
 		main_window = driver.current_window_handle
-		previous_link_elements = []
 		while search < end and continue_search:
 			# implicitly also waits for alert box to show up
 			link_elements = gen_resume_link_elements(driver)
-			link_elements = link_elements[:min(len(link_elements), end - search)]
-			resumes_changed = did_resume_links_change(previous_link_elements, link_elements)
 
-			if len(link_elements) == 0 or not resumes_changed:
+			if len(link_elements) == 0:
 				# alert box showed and it is a simulated run
 				if attempts < MAX_RETRIES:
 					# attempt retry
-					logging.error('Unable to find any changing resumes at index %d. Retrying in %d seconds...', search, SLEEP_TIME)
+					logging.error('Unable to find any resumes at index %d. Retrying in %d seconds...', search, SLEEP_TIME)
 					attempts += 1
 					time.sleep(SLEEP_TIME)
 					# refresh page assuming page is search page
@@ -407,16 +392,16 @@ def mine(args, json_filename, search_range, search_URL):
 					links = [link.get_attribute('href') for link in link_elements]
 					non_simulation_algorithm(driver, links, json_file, driver.current_url)
 
-				logging.info('Finished getting resumes up to %d index, going to sleep a bit', search)
-				time.sleep(SLEEP_TIME)
 				if next_button is None:
 					logging.info('No more pages to go to')
 					continue_search = False
 				else:
+					logging.info('Finished getting resumes up to %d index and went to next search, going to sleep a bit', search)
+					time.sleep(SLEEP_TIME)
+
 					continue_search = True
 					next_search_url = search_URL + '&' + urlencode({'start': search})
-					go_to_next_search_page(driver, args.simulate, next_button, next_search_url)
-				previous_link_elements = link_elements
+					go_to_next_search_page(driver, next_search_url)
 	except (TimeoutException, Exception):
 		traceback.print_exc()
 		logging.error('Caught exception finishing mining soon')
